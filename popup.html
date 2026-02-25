@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobLens AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <div class="popup-root">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="header-brand">
+        <svg class="brand-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="20" cy="20" r="20" fill="url(#hg)" />
+          <path d="M12 20l6 6 12-12" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+          <defs>
+            <linearGradient id="hg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#6366f1" />
+              <stop offset="1" stop-color="#a855f7" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div>
+          <h1 class="brand-name">JobLens AI</h1>
+          <p class="brand-tagline">Know your chances before you apply</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Tab Bar -->
+    <nav class="tab-bar">
+      <button class="tab active" data-tab="analyze" id="tab-analyze">Analyze</button>
+      <button class="tab" data-tab="resume" id="tab-resume">Resume</button>
+      <button class="tab" data-tab="history" id="tab-history">History</button>
+      <button class="tab" data-tab="settings" id="tab-settings">Settings</button>
+    </nav>
+
+    <!-- Tab: Analyze -->
+    <div class="tab-content active" id="tab-analyze-content">
+      <!-- Rate limit badge -->
+      <div class="rate-limit-bar" id="rate-limit-bar">
+        <span class="rl-label">Daily analyses</span>
+        <div class="rl-pills" id="rl-pills"></div>
+        <span class="rl-count" id="rl-count">…/10</span>
+      </div>
+
+      <!-- Detected Job Card -->
+      <div class="job-card" id="job-card">
+        <div class="job-card-skeleton" id="job-skeleton">
+          <div class="sk-line w-70"></div>
+          <div class="sk-line w-50"></div>
+        </div>
+        <div class="job-card-content hidden" id="job-content">
+          <div class="job-site-badge" id="job-site-badge">LinkedIn</div>
+          <h2 class="job-title" id="job-title">Job Title</h2>
+          <p class="job-meta" id="job-meta">Company · Location</p>
+          <p class="job-exp" id="job-exp"></p>
+        </div>
+        <div class="job-none hidden" id="job-none">
+          <div class="job-none-icon">🔍</div>
+          <p>Open a LinkedIn, Internshala, or careers page to detect the job automatically.</p>
+        </div>
+      </div>
+
+      <!-- Resume Status -->
+      <div class="resume-status" id="resume-status">
+        <div class="rs-icon" id="rs-icon">📄</div>
+        <div class="rs-text" id="rs-text">No resume uploaded yet</div>
+        <button class="rs-link" id="rs-upload-link">Upload now</button>
+      </div>
+
+      <!-- Analyze Button -->
+      <button class="analyze-btn" id="analyze-btn" disabled>
+        <span id="analyze-btn-text">🔍 Analyze My Match</span>
+        <div class="btn-spinner hidden" id="btn-spinner"></div>
+      </button>
+
+      <!-- Result Preview -->
+      <div class="result-area hidden" id="result-area">
+        <!-- Filled dynamically -->
+      </div>
+
+      <p class="overlay-hint" id="overlay-hint">
+        The panel on the right side of the page shows full results in context.
+      </p>
+    </div>
+
+    <!-- Tab: Resume -->
+    <div class="tab-content" id="tab-resume-content">
+      <div class="resume-section">
+        <h3 class="section-title">Your Resume</h3>
+        <p class="section-desc">Stored locally on your device. Never sent to any server.</p>
+
+        <!-- Open full-page manager (file dialog works there, not in popup) -->
+        <div class="open-manager-card" id="open-manager-card">
+          <div class="omc-icon">📂</div>
+          <div class="omc-text">
+            <strong>Upload via Resume Manager</strong>
+            <p>Chrome closes the popup when a file dialog opens.<br>Use the full-page manager instead.</p>
+          </div>
+          <button class="omc-btn" id="open-manager-btn">Open →</button>
+        </div>
+
+        <div class="divider"><span>or paste text directly</span></div>
+
+        <textarea id="resume-textarea" class="resume-textarea" placeholder="Paste your resume text here…"
+          rows="8"></textarea>
+
+        <div class="resume-actions">
+          <button class="save-btn" id="save-resume-btn">💾 Save Resume</button>
+          <button class="delete-btn" id="delete-resume-btn">🗑 Clear</button>
+        </div>
+
+        <div class="resume-saved-info hidden" id="resume-saved-info">
+          <div class="rsi-pill">✅ Resume saved</div>
+          <div class="rsi-skills" id="rsi-skills">Loading skills…</div>
+          <p class="rsi-date" id="rsi-date"></p>
+        </div>
+
+        <div class="parse-progress hidden" id="parse-progress">
+          <div class="pp-spinner"></div>
+          <span>Saving…</span>
+        </div>
+        <div class="parse-error hidden" id="parse-error"></div>
+      </div>
+    </div>
+
+
+    <!-- Tab: History -->
+    <div class="tab-content" id="tab-history-content">
+      <div class="section-header">
+        <h3 class="section-title">Analysis History</h3>
+        <button class="clear-history-btn" id="clear-history-btn">Clear all</button>
+      </div>
+      <div class="history-list" id="history-list">
+        <div class="empty-state">
+          <div class="es-icon">📋</div>
+          <p>No analyses yet. Start by opening a job page!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Settings -->
+    <div class="tab-content" id="tab-settings-content">
+      <div class="settings-section">
+        <h3 class="section-title">Settings</h3>
+
+        <div class="setting-item">
+          <label class="setting-label" for="backend-url">Backend URL</label>
+          <p class="setting-desc">URL of your JobLens backend proxy (default: localhost)</p>
+          <input type="url" id="backend-url" class="setting-input" placeholder="http://localhost:8000" />
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-row">
+            <div>
+              <label class="setting-label">Show Overlay on Job Pages</label>
+              <p class="setting-desc">Auto-inject the slide-out panel on detected job pages</p>
+            </div>
+            <label class="toggle" for="overlay-toggle">
+              <input type="checkbox" id="overlay-toggle" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <button class="save-settings-btn" id="save-settings-btn">Save Settings</button>
+        <button class="clear-cache-btn" id="clear-cache-btn">🗑 Clear Cached Results</button>
+
+        <div class="settings-info">
+          <p>Version 1.0.0 · <a href="https://github.com" target="_blank">GitHub</a></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast hidden" id="toast"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+
+</html>

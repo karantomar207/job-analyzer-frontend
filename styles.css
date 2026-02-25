@@ -1,0 +1,14 @@
+/* ─── JobLens AI – Content Script Global Styles ─────────────────────────────
+   These styles are for the page-level host element only.
+   The actual overlay uses Shadow DOM with inline styles for isolation.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* The host container – zero footprint */
+#joblens-host {
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    z-index: 2147483647 !important;
+    pointer-events: none !important;
+    /* No dimensions set here – shadow DOM handles sizing */
+}

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JobLens AI – Resume Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <!-- Local copies (CDN scripts blocked by Chrome MV3 CSP) -->
+    <script src="libs/pdf.min.js"></script>
+    <script src="libs/mammoth.min.js"></script>
+    <style>
+        :root {
+            --bg: #0a0a14;
+            --bg-card: #111122;
+            --border: rgba(255, 255, 255, 0.07);
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --purple: #a855f7;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --dim: #475569;
+            --green: #22c55e;
+            --red: #ef4444;
+            --radius: 14px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+
+        .page {
+            width: 100%;
+            max-width: 720px;
+        }
+
+        /* Header */
+        .page-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 36px;
+        }
+
+        .brand-icon {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+        }
+
+        .brand-name {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #6366f1, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .brand-sub {
+            font-size: 13px;
+            color: var(--dim);
+            margin-top: 2px;
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 28px 32px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .card-desc {
+            font-size: 13px;
+            color: var(--dim);
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed rgba(99, 102, 241, 0.35);
+            border-radius: 12px;
+            background: rgba(99, 102, 241, 0.04);
+            padding: 40px 24px;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .upload-zone:hover,
+        .upload-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.09);
+        }
+
+        .uz-icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+        }
+
+        .uz-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .uz-sub {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+
+        #browse-btn {
+            display: inline-block;
+            padding: 12px 28px;
+            background: linear-gradient(135deg, var(--primary), var(--purple));
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        #browse-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Divider */
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--dim);
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* Textarea */
+        .resume-textarea {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-family: 'Inter', monospace;
+            font-size: 13px;
+            padding: 14px 16px;
+            resize: vertical;
+            line-height: 1.65;
+            min-height: 200px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .resume-textarea:focus {
+            border-color: rgba(99, 102, 241, 0.5);
+        }
+
+        .resume-textarea::placeholder {
+            color: var(--dim);
+        }
+
+        /* Actions */
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .save-btn {
+            flex: 1;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--primary), var(--purple));
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        .save-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        .save-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .delete-btn {
+            padding: 14px 20px;
+            background: rgba(239, 68, 68, 0.08);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .delete-btn:hover {
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        /* Status */
+        .status-card {
+            display: none;
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            margin-bottom: 20px;
+        }
+
+        .status-card.visible {
+            display: block;
+        }
+
+        .sc-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #86efac;
+            margin-bottom: 8px;
+        }
+
+        .sc-skills {
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+            margin-bottom: 6px;
+        }
+
+        .sc-date {
+            font-size: 12px;
+            color: var(--dim);
+        }
+
+        /* Progress */
+        .progress-bar {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 14px;
+            margin-top: 14px;
+        }
+
+        .progress-bar.visible {
+            display: flex;
+        }
+
+        .pb-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(99, 102, 241, 0.2);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Error */
+        .error-msg {
+            display: none;
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 10px;
+            padding: 12px 16px;
+            font-size: 13px;
+            margin-top: 14px;
+        }
+
+        .error-msg.visible {
+            display: block;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 24px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        .toast.show {
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: rgba(34, 197, 94, 0.15);
+            color: #86efac;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .toast.error {
+            background: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        /* Tip */
+        .tip {
+            font-size: 12px;
+            color: var(--dim);
+            text-align: center;
+            margin-top: 12px;
+        }
+
+        .tip a {
+            color: var(--primary-light);
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+        <!-- Header -->
+        <div class="page-header">
+            <div class="brand-icon">🔍</div>
+            <div>
+                <div class="brand-name">JobLens AI</div>
+                <div class="brand-sub">Resume Manager – Your resume stays on your device</div>
+            </div>
+        </div>
+
+        <!-- Saved Resume Status -->
+        <div class="status-card" id="status-card">
+            <div class="sc-title">✅ Resume Saved</div>
+            <div class="sc-skills" id="sc-skills"></div>
+            <div class="sc-date" id="sc-date"></div>
+        </div>
+
+        <!-- Upload Card -->
+        <div class="card">
+            <div class="card-title">📂 Upload Resume</div>
+            <div class="card-desc">PDF, DOCX, or TXT · Max 2MB · Never leaves your device</div>
+
+            <div class="upload-zone" id="upload-zone">
+                <div class="uz-icon">📁</div>
+                <div class="uz-title">Drop your resume here</div>
+                <div class="uz-sub">PDF, DOCX, or TXT supported</div>
+                <button id="browse-btn">Browse File</button>
+                <input type="file" id="file-input" accept=".pdf,.docx,.doc,.txt" style="display:none" />
+            </div>
+
+            <div class="divider">or paste text below</div>
+
+            <textarea id="resume-textarea" class="resume-textarea"
+                placeholder="Paste your resume text here…"></textarea>
+
+            <div class="progress-bar" id="progress-bar">
+                <div class="pb-spinner"></div>
+                <span>Parsing resume, please wait…</span>
+            </div>
+            <div class="error-msg" id="error-msg"></div>
+
+            <div class="actions">
+                <button class="save-btn" id="save-btn">💾 Save Resume</button>
+                <button class="delete-btn" id="delete-btn">🗑 Clear</button>
+            </div>
+
+            <p class="tip">
+                You can also close this tab and paste your resume text directly in the extension popup.
+            </p>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- External script (inline scripts blocked by Chrome MV3 CSP) -->
+    <script src="options.js"></script>
+</body>
+
+</html>
