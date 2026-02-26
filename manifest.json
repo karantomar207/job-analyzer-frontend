@@ -136,10 +136,9 @@
                 "utils/*.js"
             ],
             "matches": [
-            "https://www.linkedin.com/jobs/*",
-            "https://linkedin.com/jobs/*",
-            "https://internshala.com/internship/*",
-            "https://internshala.com/jobs/*",
+            "https://www.linkedin.com/*",
+            "https://linkedin.com/*",
+            "https://internshala.com/*",
 
             "https://www.naukri.com/*",
             "https://naukri.com/*",
