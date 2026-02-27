@@ -28,7 +28,12 @@ function extractJobData() {
   else if (site === SiteType.GENERIC) data = extractGeneric();
   else return null;
   if (!data) return null;
-  return { ...data, site, url: window.location.href, extractedAt: new Date().toISOString() };
+  return ensureJobDescription({
+    ...data,
+    site,
+    url: window.location.href,
+    extractedAt: new Date().toISOString(),
+  });
 }
 
 function getText(sel) { return document.querySelector(sel)?.innerText?.trim() || ""; }
@@ -36,7 +41,13 @@ function getText(sel) { return document.querySelector(sel)?.innerText?.trim() ||
 function extractLinkedIn() {
   try {
     const title = getText(".job-details-jobs-unified-top-card__job-title") || getText(".jobs-unified-top-card__job-title") || getText("h1");
-    const company = getText(".job-details-jobs-unified-top-card__company-name") || getText(".jobs-unified-top-card__company-name") || getText(".topcard__org-name-link");
+    const company =
+      getText(".job-details-jobs-unified-top-card__company-name a") ||
+      getText(".jobs-unified-top-card__company-name a") ||
+      getText(".job-details-jobs-unified-top-card__company-name") ||
+      getText(".jobs-unified-top-card__company-name") ||
+      getText(".jobs-unified-top-card__subtitle-primary-grouping a") ||
+      getText(".topcard__org-name-link");
     const location = getText(".job-details-jobs-unified-top-card__bullet") || getText(".jobs-unified-top-card__bullet");
     const descEl = document.querySelector(".jobs-description__content") || document.querySelector(".jobs-description") || document.querySelector("#job-details");
     const description = descEl?.innerText?.trim() || "";
@@ -86,13 +97,41 @@ function extractSalary(text) {
   return m ? m[0].trim() : "Not disclosed";
 }
 
+function ensureJobDescription(jobData) {
+  const current = (jobData?.description || "").replace(/\s+/g, " ").trim();
+  if (current.length >= 50) return { ...jobData, description: current.slice(0, 8000) };
+
+  const selectors = [
+    ".jobs-description__content",
+    ".jobs-description-content__text",
+    ".jobs-description",
+    "#job-details",
+    "[class*='description']",
+    "main",
+    "[role='main']",
+    "article",
+    "body",
+  ];
+
+  let fallback = "";
+  for (const sel of selectors) {
+    const txt = document.querySelector(sel)?.innerText?.replace(/\s+/g, " ").trim() || "";
+    if (txt.length > fallback.length) fallback = txt;
+    if (fallback.length >= 1200) break;
+  }
+
+  const merged = [current, fallback].filter(Boolean).join("\n\n").trim();
+  return { ...jobData, description: merged.slice(0, 8000) };
+}
+
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let overlayInjected = false;
 let currentJobData = null;
 let overlayPanel = null;
 let lastOpenedUrl = null; // URL for which sidebar was last opened
-let currentJobSignature = "";
+let currentJobIdentity = "";
+let lastExtractionSuccessAt = 0;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 (function init() {
@@ -158,19 +197,42 @@ function onPageChange() {
 
   // ── Step 2: Try to extract job data and update sidebar when job changes ──
   const jobData = tryExtractJobData();
-  if (!jobData) return;
+  if (!jobData) {
+    // Avoid stale state when navigating away from job pages.
+    if (!isJobPageUrl(url)) {
+      currentJobData = null;
+      currentJobIdentity = "";
+      lastExtractionSuccessAt = 0;
+      notifyPopup(null);
+    } else {
+      // On job URLs, clear stale data if extraction keeps failing for a while.
+      const tooStale = lastExtractionSuccessAt && Date.now() - lastExtractionSuccessAt > 12000;
+      if (tooStale) {
+        currentJobData = null;
+        currentJobIdentity = "";
+        notifyPopup(null);
+      }
+    }
+    return;
+  }
 
-  const nextSignature = getJobSignature(jobData);
-  const isNewJob = currentJobSignature !== nextSignature;
+  const normalizedJobData = ensureJobDescription(jobData);
+  const nextIdentity = getJobIdentity(normalizedJobData);
+  const isNewJob = currentJobIdentity !== nextIdentity;
 
   // Update stored job data
-  currentJobData = jobData;
-  currentJobSignature = nextSignature;
-  notifyPopup(jobData);
+  currentJobData = normalizedJobData;
+  currentJobIdentity = nextIdentity;
+  lastExtractionSuccessAt = Date.now();
+  notifyPopup(normalizedJobData);
+
+  // Keep header synced even when only company/title appears late.
+  if (overlayPanel) {
+    updateSidebarJobHeader(normalizedJobData);
+  }
 
   // When job switches: update title/company and prompt manual analyze.
   if (isNewJob && overlayPanel) {
-    updateSidebarJobHeader(jobData);
     showReadyState();
   }
 }
@@ -202,6 +264,9 @@ function tryExtractJobData() {
       getText(".jobs-unified-top-card__company-name a") ||
       getText(".job-details-jobs-unified-top-card__company-name") ||
       getText(".jobs-unified-top-card__company-name") ||
+      getText(".job-details-jobs-unified-top-card__primary-description-container a") ||
+      getText(".jobs-unified-top-card__subtitle-primary-grouping a") ||
+      getText(".job-details-jobs-unified-top-card__primary-description") ||
       getText(".topcard__org-name-link") ||
       getText(".job-card-container__company-name");
 
@@ -213,28 +278,41 @@ function tryExtractJobData() {
 
     const description = descEl?.innerText?.trim() || "";
 
-    return {
+    return ensureJobDescription({
       title, company,
       location: getText(".job-details-jobs-unified-top-card__bullet") || getText(".jobs-unified-top-card__bullet"),
       description, skills: [],
       experience: parseExperience(description),
       salary: extractSalary(description),
       site: "linkedin", url, extractedAt: new Date().toISOString()
-    };
+    });
   }
 
   // Internshala / generic fallback
   const generic = extractJobData();
-  return generic?.title ? generic : null;
+  return generic?.title ? ensureJobDescription(generic) : null;
 }
 
 // Update job title/company in sidebar header without wiping results
 function updateSidebarJobHeader(jobData) {
   if (!overlayPanel) return;
   const titleEl = overlayPanel.querySelector(".jl-job-title");
-  const companyEl = overlayPanel.querySelector(".jl-job-company");
+  let companyEl = overlayPanel.querySelector(".jl-job-company");
+  const jobInfoEl = overlayPanel.querySelector(".jl-job-info");
+
   if (titleEl) titleEl.textContent = jobData.title || "Detected Job";
-  if (companyEl) companyEl.textContent = jobData.company || "";
+
+  const nextCompany = (jobData.company || "").trim();
+  if (nextCompany) {
+    if (!companyEl && jobInfoEl) {
+      companyEl = document.createElement("div");
+      companyEl.className = "jl-job-company";
+      jobInfoEl.appendChild(companyEl);
+    }
+    if (companyEl) companyEl.textContent = nextCompany;
+  } else if (companyEl) {
+    companyEl.remove();
+  }
 }
 
 // Show "ready to analyze" state in the sidebar content area
@@ -259,13 +337,24 @@ function showReadyState() {
 }
 
 function getJobSignature(jobData) {
+  const url = (jobData.url || "").trim().toLowerCase();
   const title = (jobData.title || "").trim().toLowerCase();
   const company = (jobData.company || "").trim().toLowerCase();
-  const descriptionHead = (jobData.description || "")
-    .trim()
-    .toLowerCase()
-    .slice(0, 220);
-  return `${title}|${company}|${descriptionHead}`;
+  return `${url}|${title}|${company}`;
+}
+
+function getJobIdentity(jobData) {
+  const url = String(jobData?.url || location.href);
+
+  // LinkedIn stable IDs
+  const viewId = url.match(/linkedin\.com\/jobs\/view\/(\d+)/i)?.[1];
+  if (viewId) return `li_view_${viewId}`;
+
+  const currentJobId = url.match(/[?&]currentJobId=(\d+)/i)?.[1];
+  if (currentJobId) return `li_search_${currentJobId}`;
+
+  // Internshala / generic fallback
+  return getJobSignature(jobData);
 }
 
 
@@ -273,7 +362,22 @@ function getJobSignature(jobData) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case "GET_JOB_DATA":
-      sendResponse({ success: true, data: currentJobData });
+      // Force a fresh extraction at request time to avoid stale cached state.
+      try {
+        const live = tryExtractJobData();
+        if (live?.title) {
+          const normalized = ensureJobDescription(live);
+          currentJobData = normalized;
+          currentJobIdentity = getJobIdentity(normalized);
+          lastExtractionSuccessAt = Date.now();
+          notifyPopup(normalized);
+          sendResponse({ success: true, data: normalized });
+        } else {
+          sendResponse({ success: true, data: currentJobData });
+        }
+      } catch (_) {
+        sendResponse({ success: true, data: currentJobData });
+      }
       break;
 
     case "SHOW_RESULT":
@@ -530,8 +634,14 @@ async function getStoredResume() {
 }
 
 function notifyPopup(jobData) {
-  // Store the detected job info so popup can read it
-  chrome.storage.local.set({ currentJob: jobData });
+  const type = jobData ? "UPSERT_CURRENT_JOB" : "CLEAR_CURRENT_JOB";
+  const payload = jobData ? { jobData } : {};
+  chrome.runtime.sendMessage({ type, payload }, () => {
+    if (chrome.runtime.lastError) {
+      // Ignore transient send errors (e.g. service worker spin-up timing).
+      return;
+    }
+  });
 }
 
 function debounce(fn, delay) {

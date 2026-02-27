@@ -15,6 +15,7 @@ import {
     clearCache,
     saveAnalysisToHistory,
     getAnalysisHistory,
+    verifyBackendUrl,
 } from "./utils/apiClient.js";
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -38,6 +39,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     ]);
 
     setupAnalyzeButton();
+    subscribeJobUpdates();
+    window.addEventListener("focus", refreshFromActiveTab);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refreshFromActiveTab();
+    });
 });
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -56,7 +62,24 @@ function setupTabs() {
 
 // ─── Current Job Detection ────────────────────────────────────────────────────
 async function loadCurrentJob() {
-    const { currentJob } = await chrome.storage.local.get(["currentJob"]);
+    const activeTabJob = await getActiveTabJobData();
+    if (activeTabJob?.title) {
+        renderCurrentJob(activeTabJob);
+        return;
+    }
+
+    // Fallback for cases where content script isn't reachable yet.
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) {
+        renderCurrentJob(null);
+        return;
+    }
+
+    const tabJob = await getCurrentJobForTab(tab.id);
+    renderCurrentJob(tabJob || null);
+}
+
+function renderCurrentJob(currentJob) {
     const skeleton = $("job-skeleton");
     const content = $("job-content");
     const none = $("job-none");
@@ -66,6 +89,7 @@ async function loadCurrentJob() {
     if (currentJob && currentJob.title) {
         currentJobData = currentJob;
         content?.classList.remove("hidden");
+        none?.classList.add("hidden");
 
         $("job-title").textContent = currentJob.title || "Unknown Title";
         $("job-meta").textContent = [currentJob.company, currentJob.location]
@@ -73,9 +97,72 @@ async function loadCurrentJob() {
         $("job-exp").textContent = currentJob.experience !== "Not specified"
             ? `Experience: ${currentJob.experience}` : "";
         $("job-site-badge").textContent = capitalize(currentJob.site || "Job");
+        refreshAnalyzeBtn();
     } else {
+        currentJobData = null;
+        content?.classList.add("hidden");
         none?.classList.remove("hidden");
+        refreshAnalyzeBtn();
     }
+}
+
+function subscribeJobUpdates() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local") return;
+        if (!changes.currentJobByTab && !changes.currentJob) return;
+        refreshFromActiveTab();
+    });
+}
+
+async function refreshFromActiveTab() {
+    const activeTabJob = await getActiveTabJobData();
+    if (activeTabJob?.title) {
+        renderCurrentJob(activeTabJob);
+        return;
+    }
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) {
+        renderCurrentJob(null);
+        return;
+    }
+
+    const tabJob = await getCurrentJobForTab(tab.id);
+    renderCurrentJob(tabJob || null);
+}
+
+async function getActiveTabJobData() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) return null;
+
+        return await new Promise((resolve) => {
+            chrome.tabs.sendMessage(tab.id, { type: "GET_JOB_DATA" }, (resp) => {
+                if (chrome.runtime.lastError) {
+                    resolve(null);
+                    return;
+                }
+                resolve(resp?.success ? resp.data : null);
+            });
+        });
+    } catch (_) {
+        return null;
+    }
+}
+
+async function getCurrentJobForTab(tabId) {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+            { type: "GET_CURRENT_JOB_FOR_TAB", payload: { tabId } },
+            (resp) => {
+                if (chrome.runtime.lastError) {
+                    resolve(null);
+                    return;
+                }
+                resolve(resp?.success ? resp.data : null);
+            }
+        );
+    });
 }
 
 // ─── Resume Status ────────────────────────────────────────────────────────────
@@ -132,7 +219,14 @@ function setupAnalyzeButton() {
 }
 
 async function runAnalysis() {
-    if (!currentJobData || !currentResume) return;
+    if (!currentJobData) {
+        showToast("Open a supported job page first.", "error");
+        return;
+    }
+    if (!currentResume?.raw?.trim()) {
+        showToast("Resume is required. Please upload/paste your resume first.", "error");
+        return;
+    }
 
     const btn = $("analyze-btn");
     const btnText = $("analyze-btn-text");
@@ -148,6 +242,22 @@ async function runAnalysis() {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) {
             throw new Error("Could not detect active tab for analysis.");
+        }
+
+        const freshJobData = await getFreshJobDataFromTab(tab.id);
+        if (freshJobData?.title) {
+            currentJobData = freshJobData;
+        }
+
+        const settings = await getSettings();
+        const verified = await verifyBackendUrl(settings.backendUrl || "");
+        if (!verified?.success) {
+            throw new Error(verified?.error || "Backend URL is invalid or unreachable. Verify it in Settings.");
+        }
+
+        const descriptionLength = (currentJobData?.description || "").trim().length;
+        if (descriptionLength < 50) {
+            throw new Error("Job description is still loading on this page. Scroll the job details once, wait 2-3 seconds, then try again.");
         }
 
         const response = await new Promise((resolve, reject) => {
@@ -182,6 +292,18 @@ async function runAnalysis() {
         spinner?.classList.add("hidden");
         showToast("Error: " + err.message, "error");
     }
+}
+
+async function getFreshJobDataFromTab(tabId) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "GET_JOB_DATA" }, (resp) => {
+            if (chrome.runtime.lastError) {
+                resolve(null);
+                return;
+            }
+            resolve(resp?.success ? resp.data : null);
+        });
+    });
 }
 
 
@@ -393,11 +515,37 @@ async function setupSettingsTab() {
     if (overlayToggle) overlayToggle.checked = settings.overlayEnabled !== false;
 
     $("save-settings-btn")?.addEventListener("click", async () => {
+        const nextUrl = (urlInput?.value || "").trim();
+        if (!isValidHttpUrl(nextUrl)) {
+            showToast("Enter a valid backend URL (http/https).", "error");
+            return;
+        }
+
         await saveSettings({
-            backendUrl: urlInput?.value.trim() || "http://localhost:8000",
+            backendUrl: nextUrl,
             overlayEnabled: overlayToggle?.checked !== false,
         });
         showToast("Settings saved! ✅", "success");
+    });
+
+    $("verify-backend-btn")?.addEventListener("click", async () => {
+        const testUrl = (urlInput?.value || "").trim();
+        if (!isValidHttpUrl(testUrl)) {
+            showToast("Enter a valid backend URL first.", "error");
+            return;
+        }
+
+        showToast("Checking backend...", "info");
+        const result = await verifyBackendUrl(testUrl);
+        if (result?.success) {
+            showToast(`Backend OK (${result.service || "service"}) ✅`, "success");
+            await saveSettings({
+                backendUrl: result.backendUrl || testUrl,
+                overlayEnabled: overlayToggle?.checked !== false,
+            });
+        } else {
+            showToast(result?.error || "Backend verification failed.", "error");
+        }
     });
 
     $("clear-cache-btn")?.addEventListener("click", async () => {
@@ -424,4 +572,15 @@ function escHtml(str) {
 
 function capitalize(s) {
     return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+function isValidHttpUrl(value) {
+    const v = String(value || "").trim();
+    if (!v) return false;
+    try {
+        const u = new URL(v);
+        return u.protocol === "http:" || u.protocol === "https:";
+    } catch (_) {
+        return false;
+    }
 }

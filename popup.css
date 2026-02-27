@@ -865,6 +865,12 @@ body {
   opacity: 0.9;
 }
 
+.verify-settings-btn {
+  margin-bottom: 8px;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+
 .clear-cache-btn {
   width: 100%;
   padding: 11px;

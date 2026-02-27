@@ -32,6 +32,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       getRateLimitStatus().then(sendResponse);
       return true;
 
+    case "UPSERT_CURRENT_JOB":
+      upsertCurrentJobForTab(sender.tab?.id, message.payload?.jobData).then(sendResponse);
+      return true;
+
+    case "CLEAR_CURRENT_JOB":
+      clearCurrentJobForTab(sender.tab?.id).then(sendResponse);
+      return true;
+
+    case "GET_CURRENT_JOB_FOR_TAB":
+      getCurrentJobForTab(message.payload?.tabId).then(sendResponse);
+      return true;
+
+    case "VERIFY_BACKEND_URL":
+      verifyBackendUrl(message.payload?.url).then(sendResponse);
+      return true;
+
     case "CLEAR_CACHE":
       clearCache().then(sendResponse);
       return true;
@@ -71,6 +87,14 @@ async function handleAnalyzeAndShow({ jobData, resumeText, url }, tabId) {
 
 // ─── Job Analysis Handler ─────────────────────────────────────────────────────
 async function handleAnalyzeJob({ jobData, resumeText, url }) {
+  if (!resumeText || !resumeText.trim()) {
+    throw new Error("Resume is required. Please upload or paste your resume first.");
+  }
+
+  if (!jobData || !jobData.title) {
+    throw new Error("Job details are missing. Open a supported job page and try again.");
+  }
+
   // 1. Check cache first
   const cached = await getCachedResult(url);
   if (cached) {
@@ -90,7 +114,7 @@ async function handleAnalyzeJob({ jobData, resumeText, url }) {
   // 3. Call backend proxy
   try {
     const settings = await getSettings();
-    const backendUrl = settings.backendUrl || "http://localhost:8000";
+    const backendUrl = normalizeBackendUrl(settings.backendUrl || "http://localhost:8000");
 
     const response = await fetch(`${backendUrl}/analyze`, {
       method: "POST",
@@ -101,7 +125,7 @@ async function handleAnalyzeJob({ jobData, resumeText, url }) {
 
     if (!response.ok) {
       const errBody = await response.text();
-      throw new Error(`Server error ${response.status}: ${errBody}`);
+      throw new Error(parseBackendError(response.status, errBody));
     }
 
     const result = await response.json();
@@ -115,6 +139,63 @@ async function handleAnalyzeJob({ jobData, resumeText, url }) {
     await refundRateLimitToken();
     throw err;
   }
+}
+
+async function verifyBackendUrl(rawUrl) {
+  let backendUrl = "";
+  try {
+    backendUrl = normalizeBackendUrl(rawUrl || "");
+  } catch (err) {
+    return { success: false, error: err.message || "Invalid backend URL." };
+  }
+
+  try {
+    const response = await fetch(`${backendUrl}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Health check failed with status ${response.status}.`,
+      };
+    }
+
+    const data = await response.json().catch(() => ({}));
+    return {
+      success: true,
+      backendUrl,
+      service: data?.service || "unknown",
+      status: data?.status || "ok",
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: "Unable to reach backend. Check URL/server/CORS and try again.",
+    };
+  }
+}
+
+function parseBackendError(status, bodyText) {
+  if (status === 422) {
+    try {
+      const parsed = JSON.parse(bodyText || "{}");
+      const detail = parsed?.detail;
+      const list = Array.isArray(detail) ? detail : [];
+      const hasShortDescriptionError = list.some((item) =>
+        String(item?.msg || "").toLowerCase().includes("job description is too short")
+      );
+
+      if (hasShortDescriptionError) {
+        return "Could not read enough job description from this page yet. Scroll/open full job details and try again in a few seconds.";
+      }
+    } catch (_) {
+      // Fall through to generic message.
+    }
+  }
+
+  return `Server error ${status}: ${bodyText}`;
 }
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
@@ -189,6 +270,34 @@ async function clearCache() {
   return { success: true, cleared: cacheKeys.length };
 }
 
+async function upsertCurrentJobForTab(tabId, jobData) {
+  if (!tabId || !jobData) {
+    return { success: false, error: "Missing tab/job payload." };
+  }
+  const { currentJobByTab = {} } = await chrome.storage.local.get(["currentJobByTab"]);
+  currentJobByTab[String(tabId)] = jobData;
+  await chrome.storage.local.set({
+    currentJobByTab,
+    // Backward compatibility for code paths still reading global key.
+    currentJob: jobData,
+  });
+  return { success: true };
+}
+
+async function clearCurrentJobForTab(tabId) {
+  if (!tabId) return { success: false, error: "Missing tab id." };
+  const { currentJobByTab = {} } = await chrome.storage.local.get(["currentJobByTab"]);
+  delete currentJobByTab[String(tabId)];
+  await chrome.storage.local.set({ currentJobByTab });
+  return { success: true };
+}
+
+async function getCurrentJobForTab(tabId) {
+  if (!tabId) return { success: true, data: null };
+  const { currentJobByTab = {} } = await chrome.storage.local.get(["currentJobByTab"]);
+  return { success: true, data: currentJobByTab[String(tabId)] || null };
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 async function getSettings() {
   const data = await chrome.storage.local.get(["settings"]);
@@ -211,6 +320,26 @@ function hashUrl(url) {
   return Math.abs(hash).toString(36);
 }
 
+function normalizeBackendUrl(input) {
+  const normalized = String(input || "").trim().replace(/\/+$/, "");
+  if (!normalized) {
+    throw new Error("Backend URL is required.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch (_) {
+    throw new Error("Backend URL is invalid.");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Backend URL must start with http:// or https://");
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 function safeSendToTab(tabId, message) {
   chrome.tabs.sendMessage(tabId, message, () => {
     if (chrome.runtime.lastError) {
@@ -228,5 +357,13 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
         overlayEnabled: true,
       },
     });
+  }
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  try {
+    await clearCurrentJobForTab(tabId);
+  } catch (_) {
+    // Ignore storage cleanup errors.
   }
 });

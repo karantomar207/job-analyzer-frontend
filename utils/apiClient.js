@@ -80,6 +80,15 @@ export async function clearCache() {
     return sendToBackground("CLEAR_CACHE");
 }
 
+/**
+ * Verify backend URL by calling backend /health.
+ * @param {string} url
+ * @returns {Promise<{success:boolean,error?:string,backendUrl?:string,status?:string,service?:string}>}
+ */
+export async function verifyBackendUrl(url) {
+    return sendToBackground("VERIFY_BACKEND_URL", { url });
+}
+
 // ─── Resume Storage ───────────────────────────────────────────────────────────
 
 /**
